@@ -1,0 +1,905 @@
+<?php
+if (!defined('ABSPATH'))
+    exit; // Exit if accessed directly
+
+
+if (!function_exists('h5vp_get_option')) {
+    function h5vp_get_option($key = 'h5vp_option')
+    {
+        $option = get_option($key);
+
+        return function ($key, $default = null, $is_boolean = false) use ($option) {
+            if (isset($option[$key])) {
+                if ($is_boolean) {
+                    return $option[$key] === '1';
+                }
+                return $option[$key];
+            }
+            return $default;
+        };
+    }
+}
+
+if (!function_exists('h5vp_sanitize_player_url')) {
+    /**
+     * Reject a player URL whose scheme is not http(s), e.g. javascript: or data:.
+     *
+     * Relative, protocol-relative and http(s) URLs come back unchanged, so stored
+     * values keep working exactly as before.
+     *
+     * @param mixed $url       Raw URL from block attributes.
+     * @param array $protocols Allowed schemes (links may also allow mailto/tel).
+     * @return string The URL, or '' when it must not reach the player.
+     */
+    function h5vp_sanitize_player_url($url, $protocols = array('http', 'https'))
+    {
+        if (!is_scalar($url)) {
+            return '';
+        }
+        $url = (string) $url;
+
+        // Check the URL the way a browser reads it: entities decoded, and
+        // whitespace/control characters inside the scheme ("java\tscript:") ignored.
+        $check = html_entity_decode($url, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $check = preg_replace('/[\x00-\x20\x7f]+/', '', $check);
+
+        if (preg_match('/^([a-z][a-z0-9+.\-]*):/i', $check, $matches) && !in_array(strtolower($matches[1]), $protocols, true)) {
+            return '';
+        }
+
+        return $url;
+    }
+}
+
+if (!function_exists('h5vp_sanitize_player_controls')) {
+    /**
+     * Keep only known Plyr control names, in their saved order.
+     *
+     * Plyr inserts a string `controls` value as raw HTML, so anything that is
+     * not a list of control names falls back to the default controls.
+     *
+     * @param mixed      $controls Raw controls value.
+     * @param array|null $fallback Used when $controls is not an array.
+     * @return array
+     */
+    function h5vp_sanitize_player_controls($controls, $fallback = null)
+    {
+        $known = array('play-large', 'restart', 'rewind', 'play', 'fast-forward', 'progress', 'current-time', 'duration', 'mute', 'volume', 'captions', 'settings', 'pip', 'airplay', 'download', 'fullscreen');
+
+        if (!is_array($controls)) {
+            return null !== $fallback ? $fallback : array('play-large', 'play', 'progress', 'current-time', 'mute', 'volume', 'captions', 'settings', 'airplay', 'fullscreen');
+        }
+
+        $clean = array();
+        foreach ($controls as $control) {
+            if (is_string($control) && in_array($control, $known, true)) {
+                $clean[] = $control;
+            }
+        }
+
+        return $clean;
+    }
+}
+
+if (!function_exists('h5vp_sanitize_option_tree')) {
+    /**
+     * Sanitize a nested player option value: strings become plain text, other
+     * scalars are kept as they are.
+     *
+     * @param mixed $value Raw value.
+     * @param int   $depth Current nesting depth.
+     * @return mixed
+     */
+    function h5vp_sanitize_option_tree($value, $depth = 0)
+    {
+        if (is_string($value)) {
+            return sanitize_text_field($value);
+        }
+        if (null === $value || is_bool($value) || is_int($value) || is_float($value)) {
+            return $value;
+        }
+        if (!is_array($value) || $depth > 4) {
+            return null;
+        }
+
+        $clean = array();
+        foreach ($value as $key => $item) {
+            $clean[$key] = h5vp_sanitize_option_tree($item, $depth + 1);
+        }
+
+        return $clean;
+    }
+}
+
+if (!function_exists('h5vp_sanitize_player_options')) {
+    /**
+     * Rebuild the `options` block attribute (the Plyr configuration) from known keys.
+     *
+     * The attribute comes from post_content, which a contributor can edit
+     * directly, and several Plyr keys are script/HTML sinks: urls.*.sdk is loaded
+     * as a <script>, urls.download becomes a link, and a string `controls` or a
+     * marker label is inserted as HTML. Legitimate values pass through unchanged.
+     *
+     * @param mixed $options Raw options attribute.
+     * @return array
+     */
+    function h5vp_sanitize_player_options($options)
+    {
+        if (!is_array($options)) {
+            return array();
+        }
+
+        $allowed = array(
+            'controls', 'settings', 'loadSprite', 'autoplay', 'autopause', 'playsinline', 'seekTime', 'volume', 'muted',
+            'hideControls', 'resetOnEnd', 'clickToPlay', 'disableContextMenu', 'invertTime', 'toggleInvert', 'displayDuration',
+            'duration', 'tooltips', 'captions', 'ratio', 'storage', 'speed', 'loop', 'ads', 'urls', 'markers', 'preload',
+            'quality', 'fullscreen', 'keyboard', 'imported', 'autoplayNextVideo', 'showPrevNext', 'showSearch',
+        );
+
+        $clean = array();
+        foreach ($options as $key => $value) {
+            if (!in_array($key, $allowed, true)) {
+                continue;
+            }
+
+            switch ($key) {
+                case 'controls':
+                    $clean[$key] = h5vp_sanitize_player_controls($value);
+                    break;
+
+                case 'settings':
+                    $known_settings = array('captions', 'quality', 'speed', 'loop');
+                    $clean[$key] = is_array($value)
+                        ? array_values(array_filter($value, function ($setting) use ($known_settings) {
+                            return is_string($setting) && in_array($setting, $known_settings, true);
+                        }))
+                        : $known_settings;
+                    break;
+
+                case 'urls':
+                    // Only the download link is configurable; provider sdk/iframe/api URLs
+                    // always come from Plyr's own defaults.
+                    $clean[$key] = array();
+                    foreach ((array) $value as $url_key => $url_value) {
+                        if ('enabled' === $url_key) {
+                            $clean[$key][$url_key] = h5vp_sanitize_option_tree($url_value);
+                        } elseif ('download' === $url_key) {
+                            $download = h5vp_sanitize_player_url($url_value);
+                            if (null === $url_value) {
+                                $clean[$key][$url_key] = null;
+                            } elseif ('' !== $download || '' === $url_value) {
+                                $clean[$key][$url_key] = $download;
+                            }
+                        }
+                    }
+                    break;
+
+                case 'ads':
+                    $clean[$key] = array();
+                    foreach ((array) $value as $ads_key => $ads_value) {
+                        if ('tagUrl' === $ads_key) {
+                            $tag_url = h5vp_sanitize_player_url($ads_value);
+                            $clean[$key][$ads_key] = ('' !== $tag_url || '' === $ads_value) ? $tag_url : null;
+                        } else {
+                            $clean[$key][$ads_key] = h5vp_sanitize_option_tree($ads_value);
+                        }
+                    }
+                    break;
+
+                case 'markers':
+                    $clean[$key] = array();
+                    foreach ((array) $value as $marker_key => $marker_value) {
+                        if ('points' !== $marker_key) {
+                            $clean[$key][$marker_key] = h5vp_sanitize_option_tree($marker_value);
+                            continue;
+                        }
+                        // Plyr writes marker labels with insertAdjacentHTML: plain text only.
+                        $points = array();
+                        foreach ((array) $marker_value as $point) {
+                            if (!is_array($point)) {
+                                continue;
+                            }
+                            $clean_point = array();
+                            foreach ($point as $field => $field_value) {
+                                if (!is_array($field_value)) {
+                                    $clean_point[$field] = h5vp_sanitize_option_tree($field_value);
+                                }
+                            }
+                            $points[] = $clean_point;
+                        }
+                        $clean[$key][$marker_key] = $points;
+                    }
+                    break;
+
+                case 'speed':
+                    $clean[$key] = array();
+                    foreach ((array) $value as $speed_key => $speed_value) {
+                        if ('options' === $speed_key) {
+                            if (is_array($speed_value)) {
+                                $clean[$key][$speed_key] = array_values(array_filter($speed_value, 'is_numeric'));
+                            }
+                        } else {
+                            $clean[$key][$speed_key] = h5vp_sanitize_option_tree($speed_value);
+                        }
+                    }
+                    break;
+
+                default:
+                    $clean[$key] = h5vp_sanitize_option_tree($value);
+            }
+        }
+
+        return $clean;
+    }
+}
+
+if (!function_exists('h5vp_sanitize_playlist_videos')) {
+    /**
+     * Sanitize the videos of a playlist (block attribute, playlist post or shortcode data).
+     *
+     * URLs keep only safe schemes and subtitle labels become plain text (Plyr writes them
+     * into its captions menu as HTML). Legitimate values come back unchanged.
+     *
+     * @param mixed $videos Raw videos list.
+     * @return mixed
+     */
+    function h5vp_sanitize_playlist_videos($videos)
+    {
+        if (!is_array($videos)) {
+            return $videos;
+        }
+
+        foreach ($videos as $index => $video) {
+            if (!is_array($video)) {
+                continue;
+            }
+            foreach (array('video_source', 'h5vp_video_source', 'video_thumb', 'h5vp_custom_download_url') as $url_key) {
+                if (isset($video[$url_key])) {
+                    $videos[$index][$url_key] = h5vp_sanitize_player_url($video[$url_key]);
+                }
+            }
+            if (!empty($video['h5vp_subtitle_playerio']) && is_array($video['h5vp_subtitle_playerio'])) {
+                foreach ($video['h5vp_subtitle_playerio'] as $sub_index => $sub) {
+                    if (!is_array($sub)) {
+                        continue;
+                    }
+                    if (isset($sub['caption_file'])) {
+                        $videos[$index]['h5vp_subtitle_playerio'][$sub_index]['caption_file'] = h5vp_sanitize_player_url($sub['caption_file']);
+                    }
+                    if (isset($sub['label']) && is_scalar($sub['label'])) {
+                        $videos[$index]['h5vp_subtitle_playerio'][$sub_index]['label'] = sanitize_text_field((string) $sub['label']);
+                    }
+                }
+            }
+            if (!empty($video['h5vp_quality_playerio']) && is_array($video['h5vp_quality_playerio'])) {
+                foreach ($video['h5vp_quality_playerio'] as $q_index => $quality) {
+                    if (is_array($quality) && isset($quality['video_file'])) {
+                        $videos[$index]['h5vp_quality_playerio'][$q_index]['video_file'] = h5vp_sanitize_player_url($quality['video_file']);
+                    }
+                }
+            }
+        }
+
+        return $videos;
+    }
+}
+
+if (!function_exists('h5vp_sanitize_stored_player_attributes')) {
+    /**
+     * Sanitize the attributes of one html5-player block as they are stored in post_content.
+     *
+     * The block editor reads these straight from post_content, so they are cleaned when the post is
+     * saved, not only when it is rendered. Only unsafe values change; legitimate ones stay as stored.
+     *
+     * @param string $block_name Block name.
+     * @param array  $attrs      Block attributes.
+     * @return array
+     */
+    function h5vp_sanitize_stored_player_attributes($block_name, $attrs)
+    {
+        if (!is_array($attrs)) {
+            return $attrs;
+        }
+
+        $url_keys = array();
+
+        if (in_array($block_name, array('html5-player/video', 'html5-player/vimeo', 'html5-player/youtube'), true)) {
+            if (isset($attrs['options'])) {
+                $attrs['options'] = h5vp_sanitize_player_options($attrs['options']);
+            }
+            $url_keys = array('source', 'poster', 'CDURL');
+
+            if (!empty($attrs['subtitle']) && is_array($attrs['subtitle'])) {
+                foreach ($attrs['subtitle'] as $index => $sub) {
+                    if (!is_array($sub)) {
+                        continue;
+                    }
+                    if (isset($sub['caption_file'])) {
+                        $attrs['subtitle'][$index]['caption_file'] = h5vp_sanitize_player_url($sub['caption_file']);
+                    }
+                    // Plyr writes the label into its captions menu as HTML: plain text only.
+                    if (isset($sub['label']) && is_scalar($sub['label'])) {
+                        $attrs['subtitle'][$index]['label'] = sanitize_text_field((string) $sub['label']);
+                    }
+                }
+            }
+
+            foreach (array('quality', 'qualities') as $quality_key) {
+                if (!empty($attrs[$quality_key]) && is_array($attrs[$quality_key])) {
+                    foreach ($attrs[$quality_key] as $index => $quality) {
+                        if (is_array($quality) && isset($quality['video_file'])) {
+                            $attrs[$quality_key][$index]['video_file'] = h5vp_sanitize_player_url($quality['video_file']);
+                        }
+                    }
+                }
+            }
+
+            // Button/overlay links may legitimately be email or phone links.
+            $link_protocols = array('http', 'https', 'mailto', 'tel');
+            if (isset($attrs['features']['endScreen']['btnLink'])) {
+                $attrs['features']['endScreen']['btnLink'] = h5vp_sanitize_player_url($attrs['features']['endScreen']['btnLink'], $link_protocols);
+            }
+            if (!empty($attrs['features']['overlay']['items']) && is_array($attrs['features']['overlay']['items'])) {
+                foreach ($attrs['features']['overlay']['items'] as $index => $item) {
+                    if (is_array($item) && isset($item['link'])) {
+                        $attrs['features']['overlay']['items'][$index]['link'] = h5vp_sanitize_player_url($item['link'], $link_protocols);
+                    }
+                    if (is_array($item) && isset($item['logo'])) {
+                        $attrs['features']['overlay']['items'][$index]['logo'] = h5vp_sanitize_player_url($item['logo']);
+                    }
+                }
+            }
+        } elseif ('html5-player/playlist' === $block_name) {
+            if (isset($attrs['controls'])) {
+                $attrs['controls'] = h5vp_sanitize_player_controls($attrs['controls']);
+            }
+            if (!empty($attrs['videos']) && is_array($attrs['videos'])) {
+                $attrs['videos'] = h5vp_sanitize_playlist_videos($attrs['videos']);
+            }
+        } elseif ('html5-player/audio' === $block_name) {
+            $url_keys = array('source', 'artwork');
+            if (!empty($attrs['tracks']) && is_array($attrs['tracks'])) {
+                foreach ($attrs['tracks'] as $index => $track) {
+                    foreach (array('source', 'artwork') as $track_key) {
+                        if (is_array($track) && isset($track[$track_key])) {
+                            $attrs['tracks'][$index][$track_key] = h5vp_sanitize_player_url($track[$track_key]);
+                        }
+                    }
+                }
+            }
+        }
+
+        foreach ($url_keys as $url_key) {
+            if (isset($attrs[$url_key])) {
+                $attrs[$url_key] = h5vp_sanitize_player_url($attrs[$url_key]);
+            }
+        }
+
+        return $attrs;
+    }
+}
+
+if (!function_exists('h5vp_sanitize_player_blocks')) {
+    /**
+     * Walk a parsed block tree (inner blocks included) and sanitize every html5-player block.
+     *
+     * @param array $blocks  Parsed blocks.
+     * @param bool  $changed Set to true when any attribute changed.
+     * @return array
+     */
+    function h5vp_sanitize_player_blocks($blocks, &$changed)
+    {
+        foreach ($blocks as $index => $block) {
+            if (!empty($block['blockName']) && 0 === strpos($block['blockName'], 'html5-player/') && !empty($block['attrs'])) {
+                $clean = h5vp_sanitize_stored_player_attributes($block['blockName'], $block['attrs']);
+                if ($clean !== $block['attrs']) {
+                    $blocks[$index]['attrs'] = $clean;
+                    $changed = true;
+                }
+            }
+            if (!empty($block['innerBlocks'])) {
+                $blocks[$index]['innerBlocks'] = h5vp_sanitize_player_blocks($block['innerBlocks'], $changed);
+            }
+        }
+
+        return $blocks;
+    }
+}
+
+if (!function_exists('h5vp_sanitize_saved_player_blocks')) {
+    /**
+     * content_save_pre: clean html5-player block attributes when a user without unfiltered_html saves.
+     *
+     * Runs after kses (priority 20). The content is slashed at this point. It is only re-serialized
+     * when something actually changed, so posts with legitimate blocks are stored byte for byte.
+     *
+     * @param string $content Slashed post content.
+     * @return string
+     */
+    function h5vp_sanitize_saved_player_blocks($content)
+    {
+        if (!is_string($content) || false === strpos($content, 'wp:html5-player/') || current_user_can('unfiltered_html')) {
+            return $content;
+        }
+
+        $changed = false;
+        $blocks = h5vp_sanitize_player_blocks(parse_blocks(wp_unslash($content)), $changed);
+
+        return $changed ? wp_slash(serialize_blocks($blocks)) : $content;
+    }
+}
+add_filter('content_save_pre', 'h5vp_sanitize_saved_player_blocks', 20);
+
+if (!function_exists(('h5vp_process_block_attributes'))) {
+    function h5vp_process_block_attributes($attributes)
+    {
+        $option = h5vp_get_option('h5vp_option');
+
+        $attributes['features']['passwordProtected']['password'] = null;
+
+        // Block attributes can originate from shortcodes / imports. Force a safe
+        // URL scheme on source + poster so a javascript: URI can never reach
+        // view.js and become a stored-XSS vector.
+        if (!empty($attributes['source'])) {
+            $attributes['source'] = esc_url_raw((string) $attributes['source']);
+        }
+        if (!empty($attributes['poster'])) {
+            $attributes['poster'] = esc_url_raw((string) $attributes['poster']);
+        }
+
+        // 'options' becomes the Plyr configuration in the browser; rebuild it from
+        // known keys so no URL or HTML sink can be set from post_content.
+        if (isset($attributes['options'])) {
+            $attributes['options'] = h5vp_sanitize_player_options($attributes['options']);
+        }
+
+        if (!empty($attributes['subtitle']) && is_array($attributes['subtitle'])) {
+            $cleaned_subtitles = [];
+            foreach ($attributes['subtitle'] as $sub) {
+                if (!empty($sub['caption_file'])) {
+                    $cleaned_subtitles[] = [
+                        'label' => sanitize_text_field($sub['label'] ?? 'English/en'),
+                        'caption_file' => esc_url_raw((string) $sub['caption_file']),
+                    ];
+                }
+            }
+            $attributes['subtitle'] = $cleaned_subtitles;
+        } else {
+            $attributes['subtitle'] = [];
+        }
+
+        if (isset($attributes['styles'])) {
+            $attributes['styles']['.plyr'] = [
+                '--plyr-color-main' => $option('h5vp_player_primary_color', '#00b2ff')
+            ];
+        }
+
+        // The frontend writes 'styles' and 'uniqueId' straight into a <style>
+        // element. Attributes originate from post_content, which a
+        // contributor-level user can edit directly, so both need to be safe
+        // as CSS selectors/declarations before they ever reach the browser.
+        if (!empty($attributes['uniqueId'])) {
+            $attributes['uniqueId'] = preg_replace('/[^A-Za-z0-9_-]/', '', (string) $attributes['uniqueId']);
+        }
+
+        if (!empty($attributes['styles']) && is_array($attributes['styles'])) {
+            $clean_styles = [];
+            foreach ($attributes['styles'] as $selector => $declarations) {
+                if (!is_array($declarations)) {
+                    continue;
+                }
+                $selector = preg_replace('/[^A-Za-z0-9_\-.#:>\s\[\]="\']/', '', (string) $selector);
+                if ('' === $selector) {
+                    continue;
+                }
+                foreach ($declarations as $prop => $value) {
+                    $prop = preg_replace('/[^A-Za-z0-9-]/', '', (string) $prop);
+                    if ('' === $prop || !is_scalar($value)) {
+                        continue;
+                    }
+                    $value = (string) $value;
+                    // Reject anything that could close the <style> element or
+                    // open a new, attacker-controlled rule.
+                    if (preg_match('/[<>{};@]/', $value)) {
+                        continue;
+                    }
+                    $clean_styles[$selector][$prop] = $value;
+                }
+            }
+            $attributes['styles'] = $clean_styles;
+        }
+
+        $attributes['skin'] = 'default';
+        unset($attributes['quality']);
+        unset($attributes['qualities']);
+
+        if (class_exists('\H5VP\Model\Video')) {
+            $videoInstance = new \H5VP\Model\Video();
+            $attributes['video_id'] = $videoInstance->get_id(['src' => $attributes['source']]);
+        }
+
+        return $attributes;
+    }
+}
+
+
+if (!function_exists('h5vp_sanitize_align')) {
+    /**
+     * Normalise a player alignment value.
+     * @param mixed $align Raw stored or user-supplied value.
+     * @return string One of left|center|right|wide|full, or '' when unset.
+     */
+    function h5vp_sanitize_align($align)
+    {
+        if (!is_string($align)) {
+            return '';
+        }
+        $align = strtolower(trim($align));
+
+        return in_array($align, ['left', 'center', 'right', 'wide', 'full'], true) ? $align : '';
+    }
+}
+
+if (!function_exists('h5vp_is_hls_source')) {
+    /**
+     * Whether a source URL is an HLS (.m3u8) stream.
+     * @param mixed $url Source URL.
+     * @return bool
+     */
+    function h5vp_is_hls_source($url)
+    {
+        if (!is_string($url) || '' === $url) {
+            return false;
+        }
+
+        return strpos(strtolower($url), '.m3u8') !== false;
+    }
+}
+
+if (!function_exists('h5vp_maybe_enqueue_hls')) {
+    /**
+     * Enqueue hls.js only when a source on this page actually needs it.
+     * @param string|array $sources One source URL, or a list of them.
+     * @return bool True when hls.js was enqueued.
+     */
+    function h5vp_maybe_enqueue_hls($sources)
+    {
+        foreach ((array) $sources as $source) {
+            if (h5vp_is_hls_source($source)) {
+                wp_enqueue_script('bplugins-hls');
+
+                return true;
+            }
+        }
+
+        return false;
+    }
+}
+
+if (!function_exists('h5vp_parse_ratio')) {
+    /** Parse a stored ratio ("16:9", "4/3") into [width, height], or null. */
+    function h5vp_parse_ratio($ratio)
+    {
+        if (!is_string($ratio) && !is_numeric($ratio)) {
+            return null;
+        }
+
+        if (!preg_match('#^(\d+(?:\.\d+)?)\s*[:/]\s*(\d+(?:\.\d+)?)$#', trim((string) $ratio), $matches)) {
+            return null;
+        }
+
+        // A zero on either side is not a ratio and would collapse the box.
+        if ((float) $matches[1] <= 0 || (float) $matches[2] <= 0) {
+            return null;
+        }
+
+        return [$matches[1] + 0, $matches[2] + 0];
+    }
+}
+
+if (!function_exists('h5vp_reserved_space')) {
+    /**
+     * Class + inline style that hold the player's box before the script mounts it, so the page
+     * doesn't jump (CLS) when the player appears.
+     * @param mixed  $ratio        Stored player ratio; defaults to 16:9.
+     * @param string $player_width Player width (e.g. "100%", "80%", "640px").
+     * @return array{class: string, style: string}
+     */
+    function h5vp_reserved_space($ratio, $player_width = '')
+    {
+        list($width, $height) = h5vp_parse_ratio($ratio) ?: [16, 9];
+
+        $player_width = is_string($player_width) ? trim($player_width) : '';
+
+        if (preg_match('#^\d*\.?\d+(px|rem|em|vw|vh|vmin|vmax|pt|pc|cm|mm|in|q|ch|ex)$#i', $player_width)) {
+            return [
+                'class' => 'h5vp-reserving-space h5vp-reserving-fixed',
+                'style' => sprintf('--h5vp-reserved-height:calc(%s * %s / %s);', $player_width, $height, $width),
+            ];
+        }
+
+        // A narrower percentage player sits in a full-width block: scale the reserved height to match.
+        if (preg_match('#^(\d*\.?\d+)%$#', $player_width, $matches) && (float) $matches[1] > 0 && (float) $matches[1] < 100) {
+            $height = round($height * (float) $matches[1] / 100, 4);
+        }
+
+        return [
+            'class' => 'h5vp-reserving-space',
+            'style' => sprintf('--h5vp-reserved-ratio:%s / %s;', $width, $height),
+        ];
+    }
+}
+
+if (!function_exists('h5vp_css_aspect_ratio')) {
+    /** Convert a stored player ratio into a value CSS `aspect-ratio` accepts. */
+    function h5vp_css_aspect_ratio($ratio, $fallback = '16 / 9')
+    {
+        $parsed = h5vp_parse_ratio($ratio);
+
+        return $parsed ? $parsed[0] . ' / ' . $parsed[1] : $fallback;
+    }
+}
+
+if (!function_exists('h5vp_embed_provider')) {
+    /**
+     * Which embed provider a player uses: 'youtube', 'vimeo', or '' for self-hosted media.
+     * Mirrors the front end's provider detection (src/hooks/useVideoSource.ts).
+     */
+    function h5vp_embed_provider($source, $provider = '')
+    {
+        if (in_array($provider, ['youtube', 'vimeo'], true)) {
+            return $provider;
+        }
+        if (!empty($provider) && 'library' !== $provider) {
+            return '';
+        }
+        if (h5vp_youtube_id($source)) {
+            return 'youtube';
+        }
+        if (h5vp_vimeo_id($source)) {
+            return 'vimeo';
+        }
+
+        return '';
+    }
+}
+
+if (!function_exists('h5vp_youtube_id')) {
+    /** Extract the 11-character video id from a YouTube URL or bare id. */
+    function h5vp_youtube_id($source)
+    {
+        if (!is_string($source) || '' === $source) {
+            return '';
+        }
+        if (preg_match('/^[a-zA-Z0-9_-]{11}$/', $source)) {
+            return $source;
+        }
+        if (preg_match('#^(?:https?:)?//(?:www\.|m\.|music\.)?(?:youtube(?:-nocookie)?\.com/(?:watch\?(?:[^\#\s]*&)?v=|embed/|v/|shorts/|live/)|youtu\.be/)([a-zA-Z0-9_-]{11})#i', $source, $match)) {
+            return $match[1];
+        }
+
+        return '';
+    }
+}
+
+if (!function_exists('h5vp_vimeo_id')) {
+    /** Extract the numeric video id from a Vimeo URL. */
+    function h5vp_vimeo_id($source)
+    {
+        if (is_string($source) && preg_match('#^(?:https?:)?//(?:www\.)?(?:player\.)?vimeo\.com/(?:.*/)?(\d+)#i', $source, $match)) {
+            return $match[1];
+        }
+
+        return '';
+    }
+}
+
+if (!function_exists('h5vp_embed_thumbnail')) {
+    /**
+     * Thumbnail for a YouTube/Vimeo player, shown until the visitor presses play so the embed's
+     * ~1MB of third-party scripts isn't downloaded on page load. Vimeo needs one oEmbed lookup,
+     * cached (including failures, e.g. private videos) so it never runs on every page view.
+     */
+    function h5vp_embed_thumbnail($source, $provider)
+    {
+        if ('youtube' === $provider) {
+            $id = h5vp_youtube_id($source);
+            return $id ? 'https://i.ytimg.com/vi/' . rawurlencode($id) . '/hqdefault.jpg' : '';
+        }
+
+        if ('vimeo' !== $provider) {
+            return '';
+        }
+
+        $id = h5vp_vimeo_id($source);
+        if (!$id) {
+            return '';
+        }
+
+        $cache_key = 'h5vp_vimeo_thumb_' . $id;
+        $cached = get_transient($cache_key);
+        if (false !== $cached) {
+            return (string) $cached;
+        }
+
+        // The simple v2 API (also used for titles, see Model\Video) first; oEmbed as the fallback.
+        $thumbnail = '';
+        $response = wp_remote_get('https://vimeo.com/api/v2/video/' . rawurlencode($id) . '.json', ['timeout' => 3]);
+        if (!is_wp_error($response) && 200 === (int) wp_remote_retrieve_response_code($response)) {
+            $data = json_decode(wp_remote_retrieve_body($response), true);
+            if (!empty($data[0]['thumbnail_large']) && is_string($data[0]['thumbnail_large'])) {
+                $thumbnail = esc_url_raw($data[0]['thumbnail_large']);
+            }
+        }
+        if (!$thumbnail) {
+            $response = wp_remote_get(
+                add_query_arg(['url' => rawurlencode('https://vimeo.com/' . $id), 'width' => 1280], 'https://vimeo.com/api/oembed.json'),
+                ['timeout' => 3]
+            );
+            if (!is_wp_error($response) && 200 === (int) wp_remote_retrieve_response_code($response)) {
+                $data = json_decode(wp_remote_retrieve_body($response), true);
+                if (!empty($data['thumbnail_url']) && is_string($data['thumbnail_url'])) {
+                    $thumbnail = esc_url_raw($data['thumbnail_url']);
+                }
+            }
+        }
+
+        set_transient($cache_key, $thumbnail, $thumbnail ? WEEK_IN_SECONDS : 6 * HOUR_IN_SECONDS);
+
+        return $thumbnail;
+    }
+}
+
+if (!function_exists('h5vp_preconnect')) {
+    /**
+     * Ask the browser to open the connection to a third-party image host early (the YouTube/Vimeo
+     * thumbnail is usually the page's largest image). Takes effect when the player is rendered before
+     * <head> is printed — block themes; otherwise it is simply skipped.
+     */
+    function h5vp_preconnect($url)
+    {
+        static $hosts = [];
+        $host = is_string($url) ? wp_parse_url($url, PHP_URL_HOST) : '';
+        if (!$host || isset($hosts[$host]) || did_action('wp_head')) {
+            return;
+        }
+        $hosts[$host] = true;
+
+        add_filter('wp_resource_hints', function ($urls, $relation_type) use ($host) {
+            if ('preconnect' === $relation_type) {
+                $urls[] = ['href' => 'https://' . $host];
+            }
+            return $urls;
+        }, 10, 2);
+    }
+}
+
+if (!function_exists('h5vp_player_placeholder')) {
+    /**
+     * Server-rendered stand-in for a player: holds the exact box (no layout shift) and shows the
+     * poster / embed thumbnail with a play button until the front end mounts the real player.
+     * The front end swaps it out on mount (src/blocks/view.tsx).
+     */
+    function h5vp_player_placeholder($attributes, $thumbnail = '')
+    {
+        $wrapper = isset($attributes['styles']['plyr_wrapper']) && is_array($attributes['styles']['plyr_wrapper']) ? $attributes['styles']['plyr_wrapper'] : [];
+        $image = !empty($attributes['poster']) ? $attributes['poster'] : $thumbnail;
+
+        // Only plain CSS lengths reach the inline style.
+        $length = '\d*\.?\d+(?:%|px|rem|em|vw|vh|vmin|vmax)?';
+
+        $style = 'aspect-ratio:' . h5vp_css_aspect_ratio($attributes['options']['ratio'] ?? null) . ';';
+        if (!empty($wrapper['width']) && is_string($wrapper['width']) && preg_match('#^' . $length . '$#', trim($wrapper['width']))) {
+            $style .= 'width:' . trim($wrapper['width']) . ';';
+        }
+        if (!empty($wrapper['borderRadius']) && is_string($wrapper['borderRadius']) && preg_match('#^' . $length . '(?:\s+' . $length . '){0,3}$#', trim($wrapper['borderRadius']))) {
+            $style .= 'border-radius:' . trim($wrapper['borderRadius']) . ';';
+        }
+        // A real <img> rather than a CSS background: the browser finds it while parsing the HTML (faster LCP),
+        // and players further down the page lazy-load theirs. Only the first player on the page loads eagerly.
+        static $h5vp_placeholder_count = 0;
+        $h5vp_placeholder_count++;
+        $is_first = 1 === $h5vp_placeholder_count;
+
+        ob_start();
+        ?>
+        <div class="preload_poster h5vp-placeholder" role="button" tabindex="0" aria-label="<?php echo esc_attr__('Play video', 'html5-video-player'); ?>" style="<?php echo esc_attr($style); ?>">
+            <?php if ($image) { ?>
+                <img class="h5vp-placeholder-image" src="<?php echo esc_url($image); ?>" alt="" decoding="async" <?php echo $is_first ? 'fetchpriority="high"' : 'loading="lazy"'; ?> style="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;" />
+            <?php } ?>
+            <span class="h5vp-placeholder-play" aria-hidden="true">
+                <svg width="24" height="24" viewBox="0 0 15 15" xmlns="http://www.w3.org/2000/svg" focusable="false"><path d="M4.79 2.09A.5.5 0 0 0 4 2.5v10a.5.5 0 0 0 .79.41l7-5a.5.5 0 0 0 0-.82l-7-5Z" /></svg>
+            </span>
+        </div>
+        <?php
+        return (string) ob_get_clean();
+    }
+}
+
+if (!function_exists('h5vp_convert_duration_to_iso8601')) {
+    function h5vp_convert_duration_to_iso8601($duration)
+    {
+        // If input is already numeric, treat as seconds
+        if (is_numeric($duration)) {
+            $hours = floor($duration / 3600);
+            $minutes = floor(($duration % 3600) / 60);
+            $seconds = $duration % 60;
+        } else {
+            // Parse HH:MM:SS, MM:SS, or SS format
+            $parts = array_reverse(explode(':', $duration));
+            $seconds = isset($parts[0]) ? intval($parts[0]) : 0;
+            $minutes = isset($parts[1]) ? intval($parts[1]) : 0;
+            $hours = isset($parts[2]) ? intval($parts[2]) : 0;
+        }
+
+        // Build ISO 8601 string
+        $iso = 'PT';
+        if ($hours > 0)
+            $iso .= $hours . 'H';
+        if ($minutes > 0)
+            $iso .= $minutes . 'M';
+        if ($seconds > 0 || $iso === 'PT')
+            $iso .= $seconds . 'S'; // Always include seconds
+
+        return $iso;
+    }
+}
+
+// h5vp_get_post_meta
+if (!function_exists('h5vp__get_post_meta')) {
+    function h5vp__get_post_meta($post_id, $key, $single = true)
+    {
+        $meta = get_post_meta($post_id, $key, $single);
+        return function ($key, $default = null, $is_boolean = false) use ($meta) {
+            if (isset($meta[$key])) {
+                if ($is_boolean) {
+                    return $meta[$key] === '1';
+                }
+                return $meta[$key];
+            }
+            return $default;
+        };
+    }
+}
+
+
+if (!function_exists('h5vp_getPostMeta')) {
+    function h5vp_getPostMeta($id, $key)
+    {
+        $meta = get_post_meta($id, $key, true);
+        return function ($key, $default = null, $is_boolean = false, $key2 = null) use ($meta) {
+            if ($key === 'all') {
+                return $meta;
+            }
+            if ($key2) {
+                $value = isset($meta[$key][$key2]) ? $meta[$key][$key2] : $default;
+            } else {
+                $value = isset($meta[$key]) ? $meta[$key] : $default;
+            }
+            if ($is_boolean) {
+                return $value == '1';
+            }
+            return $value;
+        };
+    }
+}
+
+if (!function_exists('h5vp_register_plyr_alias')) {
+    /**
+     * Keep the old 'bplugins-plyrio' handle working for code that still depends on it.
+     *
+     * The player loads Plyr and its stylesheet under its own 'h5vp-plyr' handle. 'bplugins-plyrio' is shared
+     * with other bPlugins players (HTML5 Audio Player registers Plyr 3.7.2 under it), and whichever plugin
+     * registered it first won: the video player then ran on that older, unpatched Plyr without its own
+     * stylesheet. When another plugin already owns the old handle it is left alone.
+     */
+    function h5vp_register_plyr_alias()
+    {
+        if (wp_script_is('h5vp-plyr', 'registered') && !wp_script_is('bplugins-plyrio', 'registered')) {
+            wp_register_script('bplugins-plyrio', false, array('h5vp-plyr'), H5VP_VER, false);
+        }
+        if (wp_style_is('h5vp-plyr', 'registered') && !wp_style_is('bplugins-plyrio', 'registered')) {
+            wp_register_style('bplugins-plyrio', false, array('h5vp-plyr'), H5VP_VER);
+        }
+    }
+}

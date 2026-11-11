@@ -1,0 +1,12 @@
+.env
+.DS_Store
+
+wp-content/uploads/
+wp-content/upgrade/
+wp-content/debug.log
+wp-content/themes/tooth4life/debug.log
+wp-content/themes/tooth4life/node_modules/
+wp-content/themes/tooth4life/assets/films/*.mp4
+wp-content/plugins/akismet/
+wp-content/plugins/hello.php
+

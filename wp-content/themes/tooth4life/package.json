@@ -1,0 +1,12 @@
+{
+  "name": "tooth4life-theme",
+  "private": true,
+  "scripts": {
+    "dev": "tailwindcss -i ./src/app.css -o ./assets/app.css --watch=always --poll=400",
+    "build": "tailwindcss -i ./src/app.css -o ./assets/app.css --minify"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "^4",
+    "tailwindcss": "^4"
+  }
+}
