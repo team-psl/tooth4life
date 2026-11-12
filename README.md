@@ -35,28 +35,26 @@ The defaults serve the site at <http://localhost:8080> and phpMyAdmin at <http:/
 From the project root:
 
 ```bash
-docker compose up -d
+docker compose up
 ```
 
-Open <http://localhost:8080>. On a fresh database, finish the WordPress installer, then activate **Tooth4Life** under **Appearance → Themes**. The theme is already on disk. Do not upload `tooth4life.zip` here.
+Leave that terminal open. The site is running while the log keeps printing and the command has not exited. When you are finished, press Ctrl+C in that same terminal. The command returns to the prompt and the site stops.
+
+Open <http://localhost:8080> in a browser while the log is still running. On a fresh database, finish the WordPress installer, then activate **Tooth4Life** under **Appearance → Themes**. The theme is already on disk. Do not upload `tooth4life.zip` here.
 
 If the dashboard says the demo is not installed, open **Appearance → Tooth4Life demo** and click **Install demo pages**. That publishes Home, About, Contact Us, For Parents, Research, the guide pages, the films, and the FAQs. Running it again does not duplicate pages that already exist.
 
 Set **Settings → Permalinks** to **Post name** if addresses do not look like `/about/`.
 
-Stop the stack with `docker compose stop`. Start it again with `docker compose up -d`. The database and uploads live in Docker volumes, so they survive a stop.
+Start the site again later with the same command, `docker compose up`. The database and uploads live in Docker volumes, so they are still there after Ctrl+C.
+
+Any other command, such as the CSS build below, needs a second terminal. The first one is busy showing that the site is running.
 
 ## Change the theme and look at it
 
 Edit files under `wp-content/themes/tooth4life/`. Refresh <http://localhost:8080> to see PHP, template, and copy changes.
 
-Styles are written in `src/app.css`. The `tailwind` container watches that file and writes `assets/app.css`, which is the sheet WordPress loads. After a CSS edit, wait for the container to finish, then refresh. If the page looks unchanged:
-
-```bash
-docker compose logs tailwind --tail 30
-```
-
-You should see a compile line. If the container is not running, start the stack again.
+Styles are written in `src/app.css`. The `tailwind` service watches that file and writes `assets/app.css`, which is the sheet WordPress loads. After a CSS edit, watch the terminal where `docker compose up` is running. A line that says the build is done means you can refresh the browser. If that terminal is sitting at a prompt, the site is not running. Start it again with `docker compose up`.
 
 Useful local URLs:
 
@@ -98,7 +96,7 @@ The hosted site may be on PHP 8.2. The theme still has to run on PHP 7.4.
 - User-facing copy uses UK spelling.
 - Do not invent a phone number, WhatsApp number, address, price, or a claim that stored cells are a treatment. Storage is the service. Treatment is only described as science that may come later.
 
-After a CSS change that will be published, produce the minified sheet before you zip:
+After a CSS change that will be published, produce the minified sheet before you zip. Run this in a second terminal, while `docker compose up` is still running in the first:
 
 ```bash
 docker compose exec tailwind npm run build
