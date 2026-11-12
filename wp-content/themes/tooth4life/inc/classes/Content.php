@@ -16,6 +16,91 @@ if (! defined('ABSPATH')) {
 final class Content
 {
 	/**
+	 * Homepage sentences. An empty saved value keeps the theme wording.
+	 *
+	 * @return array<string, array{label: string, default: string, multiline: bool}>
+	 */
+	public static function home_fields(): array
+	{
+		return [
+			'_t4l_home_kicker' => [
+				'label' => __('Service line', 'tooth4life'),
+				'default' => __('The Dental Stem Cells Storage Service', 'tooth4life'),
+				'multiline' => false,
+			],
+			'_t4l_home_title' => [
+				'label' => __('Main title', 'tooth4life'),
+				'default' => __('Stem cells from a milk tooth', 'tooth4life'),
+				'multiline' => false,
+			],
+			'_t4l_home_lede' => [
+				'label' => __('Introduction', 'tooth4life'),
+				'default' => __('Tooth4Life isolates and stores stem cells from milk teeth, the baby teeth children shed naturally. Personalised treatment is only a possibility as medical science advances.', 'tooth4life'),
+				'multiline' => true,
+			],
+			'_t4l_home_note' => [
+				'label' => __('Dundee note', 'tooth4life'),
+				'default' => __('The service is based on stem cell research at Dundee Dental School and Hospital, University of Dundee.', 'tooth4life'),
+				'multiline' => true,
+			],
+			'_t4l_home_button' => [
+				'label' => __('Button', 'tooth4life'),
+				'default' => __('How collection works', 'tooth4life'),
+				'multiline' => false,
+			],
+			'_t4l_home_films_title' => [
+				'label' => __('Films heading', 'tooth4life'),
+				'default' => __('Three films', 'tooth4life'),
+				'multiline' => false,
+			],
+			'_t4l_home_films_intro' => [
+				'label' => __('Films introduction', 'tooth4life'),
+				'default' => __('What stem cells are, why a baby tooth is the better sample, and how collection works at home.', 'tooth4life'),
+				'multiline' => true,
+			],
+			'_t4l_home_faq_title' => [
+				'label' => __('Questions heading', 'tooth4life'),
+				'default' => __('Questions parents ask', 'tooth4life'),
+				'multiline' => false,
+			],
+			'_t4l_home_ask_title' => [
+				'label' => __('Closing heading', 'tooth4life'),
+				'default' => __('Ask about storing a milk tooth.', 'tooth4life'),
+				'multiline' => false,
+			],
+			'_t4l_home_ask_text' => [
+				'label' => __('Closing text', 'tooth4life'),
+				'default' => __('If you are interested in storing stem cells from your child’s milk tooth, or you want to know more, write to the Tooth4Life team.', 'tooth4life'),
+				'multiline' => true,
+			],
+		];
+	}
+
+	public static function home_title(): string
+	{
+		$title = esc_html(self::home('_t4l_home_title'));
+		$phrase = esc_html('milk tooth');
+		if (strpos($title, $phrase) !== false) {
+			$title = str_replace($phrase, '<em>' . $phrase . '</em>', $title);
+		}
+
+		return $title;
+	}
+
+	public static function home(string $key): string
+	{
+		$fields = self::home_fields();
+		$default = $fields[$key]['default'] ?? '';
+		$front = (int) get_option('page_on_front');
+		if ($front <= 0) {
+			return $default;
+		}
+		$value = get_post_meta($front, $key, true);
+
+		return is_string($value) && trim($value) !== '' ? $value : $default;
+	}
+
+	/**
 	 * @return array<string, string>
 	 */
 	public static function descriptions(): array
@@ -389,7 +474,7 @@ final class Content
 			'templates/about.php',
 			'templates/contact.php',
 		];
-		if (! is_front_page() && ! is_page_template($designed)) {
+		if (is_front_page() || ! is_page_template($designed)) {
 			return;
 		}
 

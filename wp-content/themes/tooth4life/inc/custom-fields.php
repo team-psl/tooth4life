@@ -57,6 +57,17 @@ final class Custom_Fields
 			'auth_callback' => $auth,
 			'sanitize_callback' => 'sanitize_text_field',
 		]);
+
+		$page_auth = static fn (): bool => current_user_can('edit_pages');
+		foreach (Content::home_fields() as $key => $field) {
+			register_post_meta('page', $key, [
+				'type' => 'string',
+				'single' => true,
+				'show_in_rest' => true,
+				'auth_callback' => $page_auth,
+				'sanitize_callback' => $field['multiline'] ? 'sanitize_textarea_field' : 'sanitize_text_field',
+			]);
+		}
 	}
 
 	public static function boxes(): void

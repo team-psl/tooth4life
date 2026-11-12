@@ -47,8 +47,8 @@ final class Video
 		<section class="t4l-films-section t4l-after-hero" aria-labelledby="films">
 			<div class="t4l-wrap">
 				<header class="t4l-films-head">
-					<h2 id="films"><?php esc_html_e('Three films', 'tooth4life'); ?></h2>
-					<p><?php esc_html_e('What stem cells are, why a baby tooth is the better sample, and how collection works at home.', 'tooth4life'); ?></p>
+					<h2 id="films"><?php echo esc_html(\Tooth4Life\Content::home('_t4l_home_films_title')); ?></h2>
+					<p><?php echo esc_html(\Tooth4Life\Content::home('_t4l_home_films_intro')); ?></p>
 				</header>
 				<div class="t4l-feature-list">
 					<?php foreach ($films as $index => $film) : ?>

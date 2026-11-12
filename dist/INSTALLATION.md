@@ -35,6 +35,8 @@ That creates and publishes Home, For Parents, Research, About, and Contact Us, s
 
 Set **Settings → Permalinks** to **Post name** if the page addresses do not look like `/for-parents/`. The demo installer switches an empty permalink setting to that structure.
 
+If About was deleted and created again, WordPress may name the new page `about-2` while the old one is still in the trash. The theme still shows the designed About page on that new page, and the About menu link follows it. Empty the trash, then set the new page’s slug back to `about` if you want the address to be `/about/`. In the page sidebar, the template should be **About**.
+
 ## 4. Add the three films
 
 Upload each film to the media library, or host it on YouTube or Vimeo, then paste the address into the matching film.
@@ -59,7 +61,13 @@ If **Streaming URL** is left empty, the theme uses the matching fallback under *
 
 The excerpt under the title, the duration, and the related link are already filled in by the demo installer. Order on the home page follows the film order field.
 
-## 5. Check the contact details
+## 5. Edit the homepage text
+
+Open **Pages → Home**. The page itself is a preview. The wording is in the **Homepage text** panel in the settings sidebar (the Page tab). Change a field and click **Save**. The preview updates after the save.
+
+Film titles and the text under each film are edited on the **Films** screen. Questions and answers are edited on the **FAQs** screen.
+
+## 6. Check the contact details
 
 Under **Appearance → Customize → Tooth4Life**:
 

@@ -9,6 +9,7 @@ declare(strict_types=1);
 
 namespace Tooth4Life\Components;
 
+use Tooth4Life\Content;
 use Tooth4Life\Customizer;
 use Tooth4Life\Media;
 
@@ -42,14 +43,14 @@ final class Call_To_Action
 
 	public static function band(): void
 	{
-		if (is_page_template('templates/contact.php')) {
+		if (! is_front_page()) {
 			return;
 		}
 		?>
 		<section class="t4l-ask" aria-labelledby="ask-tooth4life">
 			<div class="t4l-ask-inner t4l-wrap">
-				<h2 id="ask-tooth4life">Ask about storing a milk tooth.</h2>
-				<p>If you are interested in storing stem cells from your child’s milk tooth, or you want to know more, write to the Tooth4Life team.</p>
+				<h2 id="ask-tooth4life"><?php echo esc_html(Content::home('_t4l_home_ask_title')); ?></h2>
+				<p><?php echo esc_html(Content::home('_t4l_home_ask_text')); ?></p>
 				<?php self::actions('light'); ?>
 			</div>
 		</section>

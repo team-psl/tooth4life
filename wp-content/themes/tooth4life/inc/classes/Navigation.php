@@ -30,8 +30,8 @@ final class Navigation
 			['label' => __('Home', 'tooth4life'), 'slug' => 'home', 'url' => home_url('/')],
 			['label' => __('For Parents', 'tooth4life'), 'slug' => 'for-parents', 'url' => '', 'children' => Guides::nav('for-parents')],
 			['label' => __('Research', 'tooth4life'), 'slug' => 'research', 'url' => '', 'children' => Guides::nav('research')],
-			['label' => __('About', 'tooth4life'), 'slug' => 'about', 'url' => home_url('/about/')],
-			['label' => __('Contact Us', 'tooth4life'), 'slug' => 'contact-us', 'url' => home_url('/contact-us/')],
+			['label' => __('About', 'tooth4life'), 'slug' => 'about', 'url' => self::page_url('about')],
+			['label' => __('Contact Us', 'tooth4life'), 'slug' => 'contact-us', 'url' => self::page_url('contact-us')],
 		];
 	}
 
@@ -97,13 +97,27 @@ final class Navigation
 		}
 	}
 
+	public static function page_url(string $slug): string
+	{
+		$page = Setup::published_page($slug);
+		if ($page instanceof \WP_Post) {
+			return (string) get_permalink($page);
+		}
+
+		return home_url('/' . $slug . '/');
+	}
+
 	private static function is_exact(string $slug): bool
 	{
 		if ($slug === 'home') {
 			return is_front_page();
 		}
+		if (is_page($slug)) {
+			return true;
+		}
+		$post = get_queried_object();
 
-		return is_page($slug);
+		return $post instanceof \WP_Post && Setup::designed_slug($post) === $slug;
 	}
 
 	/**

@@ -26,7 +26,7 @@ final class Faq
 		?>
 		<section class="t4l-faq" aria-labelledby="t4l-faq">
 			<div class="t4l-wrap">
-				<h2 id="t4l-faq"><?php esc_html_e('Questions parents ask', 'tooth4life'); ?></h2>
+				<h2 id="t4l-faq"><?php echo esc_html(Content::home('_t4l_home_faq_title')); ?></h2>
 				<div class="t4l-faq-list">
 					<?php foreach ($items as $item) : ?>
 						<details>

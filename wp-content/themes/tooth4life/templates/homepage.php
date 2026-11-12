@@ -18,12 +18,12 @@ $hero = Customizer::hero();
 	<img class="t4l-hero-art" src="<?php echo esc_url($hero['url']); ?>" alt="<?php echo esc_attr($hero['alt']); ?>" width="2117" height="743" fetchpriority="high">
 	<div class="t4l-hero-grid t4l-wrap">
 		<div class="t4l-hero-copy">
-			<p class="t4l-hero-service"><?php esc_html_e('The Dental Stem Cells Storage Service', 'tooth4life'); ?></p>
-			<h1 class="t4l-hero-title">Stem cells from a <em>milk tooth</em></h1>
-			<p class="t4l-hero-lede">Tooth4Life isolates and stores stem cells from milk teeth, the baby teeth children shed naturally. Personalised treatment is only a possibility as medical science advances.</p>
-			<p class="t4l-hero-note">The service is based on stem cell research at Dundee Dental School and Hospital, University of Dundee.</p>
+			<p class="t4l-hero-service"><?php echo esc_html(Content::home('_t4l_home_kicker')); ?></p>
+			<h1 class="t4l-hero-title"><?php echo Content::home_title(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in Content::home_title(). ?></h1>
+			<p class="t4l-hero-lede"><?php echo esc_html(Content::home('_t4l_home_lede')); ?></p>
+			<p class="t4l-hero-note"><?php echo esc_html(Content::home('_t4l_home_note')); ?></p>
 			<p class="t4l-hero-action">
-				<a class="t4l-pill" href="<?php echo esc_url(home_url('/for-parents/storage-to-treatment/')); ?>"><?php esc_html_e('How collection works', 'tooth4life'); ?> <span aria-hidden="true">→</span></a>
+				<a class="t4l-pill" href="<?php echo esc_url(home_url('/for-parents/storage-to-treatment/')); ?>"><?php echo esc_html(Content::home('_t4l_home_button')); ?> <span aria-hidden="true">→</span></a>
 			</p>
 		</div>
 	</div>
